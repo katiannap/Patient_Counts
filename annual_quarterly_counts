@@ -1,0 +1,527 @@
+/*for next count, add ‘_4’*/
+
+patient counts
+
+
+-- Front page of report. This page will have plots over time grouped by year/quarter/MONTH
+-- of patients, providers, practices AND visits.
+​
+----------------------------------------------------------------------------------------------------
+-- All encounters
+​
+DROP TABLE IF EXISTS aao_test.rpt_madrid2_pts_3;
+CREATE TABLE aao_test.rpt_madrid2_pts_3 AS
+SELECT
+    enc_type                   AS enc_type,
+    patient_guid               AS patient_guid,
+    date                       AS "date",
+    EXTRACT(YEAR FROM date)    AS "year",
+    EXTRACT(QUARTER FROM date) AS "quarter"
+FROM (
+    SELECT
+        'dx' as enc_type,
+        dx.vh_patient_problem_uid AS uid,
+        dx.patient_guid,
+        dx.documentation_date AS "date"
+    FROM madrid2.patient_problem dx
+ 
+    UNION
+    SELECT
+        'p' as enc_type,
+        vh_patient_procedure_uid AS uid,
+        patient_guid,
+        procedure_date AS "date"
+    FROM madrid2.patient_procedure
+    UNION
+    SELECT
+        'v' as enc_type,
+        vh_visit_uid AS uid,
+        patient_guid,
+        visit_start_date AS "date"
+    FROM madrid2.patient_visit
+    UNION
+    SELECT
+        'rva' as enc_type,
+        vh_patient_result_observation_uid AS uid,
+        patient_guid,
+        result_date AS "date"
+    FROM madrid2.patient_result_va
+)
+WHERE EXTRACT(YEAR FROM date) BETWEEN 2013 AND 2020;
+​
+----------------------------------------------------------------------------------------------------
+-- First encounter for all patients
+​
+DROP TABLE IF EXISTS aao_test.rpt_madrid2_pts_first_3 ;
+CREATE TABLE aao_test.rpt_madrid2_pts_first_3 AS
+SELECT
+    patient_guid,
+    MIN("date") AS first_encounter
+FROM aao_test.rpt_madrid2_pts 
+GROUP BY patient_guid;
+​
+----------------------------------------------------------------------------------------------------
+-- Patients
+-- Get Unique and Cumulative patients by quarter
+​
+DROP TABLE IF EXISTS aao_test.rpt_madrid2_ptscnts_3;
+CREATE TABLE aao_test.rpt_madrid2_ptscnts_3 AS
+SELECT
+    u."year",
+    u."quarter",
+    u.count_pt_unique,
+    c.count_pt_cumulative
+FROM (
+    SELECT
+        "year",
+        "quarter",
+        COUNT(DISTINCT patient_guid) AS count_pt_unique
+    FROM aao_test.rpt_madrid2_pts_3 
+    GROUP BY "year", "quarter"
+) u
+JOIN (
+    SELECT
+        "year",
+        "quarter",
+        SUM(COUNT(DISTINCT patient_guid)) OVER (
+            ORDER BY "year", "quarter" ASC
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS count_pt_cumulative
+    FROM (
+        SELECT
+            patient_guid,
+            EXTRACT(YEAR FROM first_encounter) AS "year",
+            EXTRACT(QUARTER FROM first_encounter) AS "quarter"
+        FROM aao_test.rpt_madrid2_pts_first_3
+    ) R1
+    GROUP BY "year", "quarter"
+) c ON (
+    u."year" = c."year" AND
+    u."quarter" = c."quarter"
+);
+​
+​
+DROP TABLE IF EXISTS aao_test.rpt_madrid2_ptscnts2_3;
+create table aao_test.rpt_madrid2_ptscnts2_3 as (
+SELECT "year", "quarter", count_pt_unique, count_pt_cumulative
+FROM aao_test.rpt_madrid2_ptscnts
+ORDER BY "year", "quarter");
+
+
+patient diagnosis counts (PT DX)
+
+
+————Diagnoses
+​
+​
+​
+DROP TABLE IF EXISTS aao_test.rpt_madrid2_dxs_3;
+CREATE TABLE aao_test.rpt_madrid2_dxs_3 AS
+SELECT
+    "year",
+    "quarter",
+    "count",
+    SUM("count") OVER (
+        ORDER BY "year", "quarter" ASC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS count_cumulative
+FROM (
+    SELECT
+        EXTRACT(YEAR FROM diagnosis_date) AS "year",
+        EXTRACT(QUARTER FROM diagnosis_date) AS "quarter",
+        COUNT(*) AS "count"
+    FROM (
+        SELECT
+            dx.vh_patient_problem_uid,
+            dx.patient_guid,
+            CASE
+                WHEN EXTRACT(YEAR FROM dx.problem_onset_date)
+                    BETWEEN 2013 AND 2020
+                    THEN dx.problem_onset_date
+                ELSE dx.documentation_date
+            END AS diagnosis_date
+        FROM madrid2.patient_problem dx
+ 
+    ) R1
+    WHERE EXTRACT(YEAR FROM diagnosis_date) BETWEEN 2013 AND 2020
+        AND diagnosis_date IS NOT NULL
+    GROUP BY 
+        EXTRACT(YEAR FROM diagnosis_date),
+        EXTRACT(QUARTER FROM diagnosis_date)
+) R2;
+​
+DROP TABLE IF EXISTS aao_test.rpt_madrid2_dxscnts_3;
+CREATE TABLE aao_test.rpt_madrid2_dxscnts_3 AS (
+SELECT "year", "quarter", "count", count_cumulative
+FROM aao_test.rpt_madrid2_dxs_3
+ORDER BY "year", "quarter");
+
+
+practice procedure counts (PT PROC) 
+
+
+——Procedures
+​
+DROP TABLE IF exists aao_test.rpt_madrid2_procs_3;
+CREATE TABLE  aao_test.rpt_madrid2_procs_3 AS
+SELECT
+    "year",
+    "quarter",
+    "count",
+    SUM("count") OVER (
+        ORDER BY "year", "quarter" ASC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS count_cumulative
+FROM (
+    SELECT
+        EXTRACT(YEAR FROM procedure_date) AS "year",
+        EXTRACT(QUARTER FROM procedure_date) AS "quarter",
+        COUNT(*) AS "count"
+    FROM  madrid2.patient_procedure
+    WHERE EXTRACT(YEAR FROM procedure_date) BETWEEN 2013 AND 2020
+        AND procedure_date IS NOT NULL
+        AND SUBSTRING(procedure_code, 1, 5) NOT IN (
+            '92002', '92004',
+            '92012', '92014',
+            '99201', '99202', '99203', '99204', '99205',
+            '99211', '99212', '99213', '99214', '99215',
+            '99218', '99219', '99220', '99221', '99222',
+            '99223', '99224', '99225', '99226', '99231',
+            '99232', '99233', '99241', '99242', '99243',
+            '99244', '99245', '99281', '99282', '99283',
+            '99284', '99285', '99304', '99305', '99306',
+            '99307', '99308', '99309', '99310', '99354',
+            '99356', '99357', '99358', '99359', '99441',
+            '99442', '99443', '99444', '99446', '99447',
+            '99448', '99449'
+        )
+    GROUP BY 
+        EXTRACT(YEAR FROM procedure_date),
+        EXTRACT(QUARTER FROM procedure_date)
+) R1;
+​
+
+SELECT
+	"year",
+	"quarter",
+	"count",
+	count_cumulative
+FROM
+	aao_test.rpt_madrid2_procs_3
+ORDER BY
+	"year",
+	"quarter";
+
+patient visit billable counts
+
+
+
+
+DROP TABLE IF EXISTS visit_code_test;
+CREATE temp TABLE  visit_code_test  AS
+SELECT
+		"year",
+		"quarter",
+		"count",
+		SUM("count") OVER (ORDER BY "year",
+			"quarter" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS count_cumulative
+	FROM (
+	SELECT
+		EXTRACT(YEAR FROM procedure_date) AS "year",
+		EXTRACT(QUARTER FROM procedure_date) AS "quarter",
+		COUNT(*) AS "count"
+	FROM ( SELECT DISTINCT
+		patient_guid,
+		procedure_date,
+		procedure_code,
+		practice_id
+	FROM
+		madrid2.patient_procedure
+	WHERE
+		EXTRACT(YEAR FROM procedure_date) BETWEEN 2013 AND 2020
+		AND procedure_date IS NOT NULL
+		AND SUBSTRING(procedure_code, 1, 5) IN('92002', '92004', '92012', '92014', '99201', '99202', '99203', '99204', '99205', '99211', '99212', '99213', '99214', '99215', '99218', '99219', '99220', '99221', '99222', '99223', '99224', '99225', '99226', '99231', '99232', '99233', '99241', '99242', '99243', '99244', '99245', '99281', '99282', '99283', '99284', '99285', '99304', '99305', '99306', '99307', '99308', '99309', '99310', '99354', '99356', '99357', '99358', '99359', '99441', '99442', '99443', '99444', '99446', '99447', '99448', '99449'))
+GROUP BY
+	EXTRACT(YEAR FROM procedure_date),
+	EXTRACT(QUARTER FROM procedure_date)
+);
+
+
+select * from visit_code_test order by year, quarter;
+
+
+patient visit all counts
+
+
+--original
+
+
+DROP TABLE IF EXISTS visit_code_testb;
+CREATE temp TABLE visit_code_testb AS
+SELECT
+    “year”,
+    “quarter”,
+    “count”,
+    SUM(“count”) OVER (
+        ORDER BY “year”, “quarter” ASC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS count_cumulative
+FROM (
+    SELECT
+        EXTRACT(YEAR FROM visit_start_date) AS “year”,
+        EXTRACT(QUARTER FROM visit_start_date) AS “quarter”,
+        COUNT(*) AS “count”
+    FROM (select distinct patient_guid, practice_id, visit_type_code, visit_start_date
+    from madrid2.patient_visit)
+    WHERE EXTRACT(YEAR FROM visit_start_date) BETWEEN 2013 and 2020
+        AND visit_start_date IS NOT NULL
+    GROUP BY
+        EXTRACT(YEAR FROM visit_start_date),
+        EXTRACT(QUARTER FROM visit_start_date)
+) R1;
+
+
+--test
+
+DROP TABLE IF EXISTS visit_code_testb;
+CREATE temp TABLE  visit_code_testb  AS
+SELECT
+    "year",
+    "quarter",
+    "count",
+    SUM("count") OVER (
+        ORDER BY "year", "quarter" ASC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS count_cumulative
+FROM (
+    SELECT
+        EXTRACT(YEAR FROM visit_start_date) AS "year",
+        EXTRACT(QUARTER FROM visit_start_date) AS "quarter",
+        COUNT(*) AS "count"
+    FROM (select distinct patient_guid, practice_id, visit_type_code, visit_start_date
+    from madrid2.patient_visit)
+    WHERE EXTRACT(YEAR FROM visit_start_date) BETWEEN 2013 and 2020
+        AND visit_start_date IS NOT NULL
+        and visit_type_code is not null
+    GROUP BY
+        EXTRACT(YEAR FROM visit_start_date),
+        EXTRACT(QUARTER FROM visit_start_date)
+) R1;
+
+
+select * from visit_code_testb order by year, quarter;
+
+
+
+va counts
+
+
+----------------------
+-- VA Results
+​
+DROP TABLE IF EXISTS aao_test.rpt_madrid2_va_3;
+CREATE TABLE  aao_test.rpt_madrid2_va_3  AS
+SELECT
+    "year",
+    "quarter",
+    "count",
+    SUM("count") OVER (
+        ORDER BY "year", "quarter" ASC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS count_cumulative
+FROM (
+    SELECT
+        EXTRACT(YEAR FROM result_date) AS "year",
+        EXTRACT(QUARTER FROM result_date) AS "quarter",
+        COUNT(*) AS "count"
+    FROM madrid2.patient_result_va
+    WHERE EXTRACT(YEAR FROM result_date) BETWEEN 2013 AND 2020
+        AND result_date IS NOT NULL
+    GROUP BY 
+        EXTRACT(YEAR FROM result_date),
+        EXTRACT(QUARTER FROM result_date)
+) R1;
+DROP TABLE IF EXISTS  aao_test.rpt_madrid2_vacnts;
+CREATE TABLE aao_test.rpt_madrid2_vacnts  AS
+SELECT "year", "quarter", "count", count_cumulative
+FROM  aao_test.rpt_madrid2_va 
+ORDER BY "year", "quarter";
+
+provider counts
+
+
+DROP TABLE IF EXISTS aao_test.pci_provider_valid_prov_id_3;
+CREATE   TABLE aao_test.pci_provider_valid_prov_id_3  AS
+SELECT npi
+FROM madrid2.patient_procedure
+WHERE EXTRACT(YEAR FROM procedure_date) BETWEEN 2013 AND 2020
+UNION
+SELECT npi
+FROM madrid2.patient_visit
+WHERE EXTRACT(YEAR FROM visit_start_date) BETWEEN  2013 AND 2020;
+​
+DROP TABLE IF EXISTS aao_test.rpt_madrid2_provider ;
+CREATE TABLE aao_test.rpt_madrid2_provider  AS
+SELECT DISTINCT
+    n.physician_npi,
+    n.provider_type,
+    n.primary_specialty,
+    n.secondary_specialty,
+    n.third_specialty,
+    n.state
+FROM aao_team.aao_npi_2019_06 n
+JOIN madrid2.provider p ON n.physician_npi = p.npi
+JOIN aao_test.pci_provider_valid_prov_id vpid ON p.npi = vpid.npi;
+​
+​
+DROP TABLE IF EXISTS aao_test.rpt_madrid2_providercnts_3 ;
+CREATE TABLE aao_test.rpt_madrid2_providercnts_3  AS
+SELECT
+    spec1,
+    spec2,
+    CASE WHEN "value" IS NULL THEN 'Unknown' ELSE "value" END AS "value",
+    "count"
+FROM (
+​
+    SELECT
+        'overall count'               AS spec1,
+        'all providers | no filter'   AS spec2,
+        NULL                          AS value,
+        COUNT(DISTINCT physician_npi) AS "count"
+    FROM  aao_team.aao_npi_2019_06 
+​
+    UNION
+​
+    SELECT
+        'overall count'                                   AS spec1,
+        'all providers | at least one visit or procedure' AS spec2,
+        NULL                                              AS value,
+        COUNT(DISTINCT physician_npi)                     AS "count"
+    FROM aao_test.rpt_madrid2_provider
+​
+    UNION
+​
+    SELECT
+        'overall count'               AS spec1,
+        'md only'                     AS spec2,
+        NULL                          AS value,
+        COUNT(DISTINCT physician_npi) AS "count"
+    FROM aao_test.rpt_madrid2_provider 
+    WHERE provider_type = 'MD'
+​
+    UNION
+​
+    SELECT
+        'overall count'               AS spec1,
+        'od only'                     AS spec2,
+        NULL                          AS value,
+        COUNT(DISTINCT physician_npi) AS "count"
+    FROM aao_test.rpt_madrid2_provider  
+    WHERE provider_type = 'OD'
+​
+    UNION
+​
+    SELECT
+        'provider type'               AS spec1,
+        NULL                          AS spec2,
+        provider_type                 AS "value",
+        COUNT(DISTINCT physician_npi) AS "count"
+    FROM aao_test.rpt_madrid2_provider  
+    GROUP BY provider_type
+​
+    UNION
+​
+    SELECT
+        'primary specialty'           AS spec1,
+        'md only'                     AS spec2,
+        primary_specialty             AS "value",
+        COUNT(DISTINCT physician_npi) AS "count"
+    FROM aao_test.rpt_madrid2_provider  
+    WHERE provider_type = 'MD'
+    GROUP BY primary_specialty
+​
+    UNION
+​
+    SELECT
+        'secondary specialty'         AS spec1,
+        'md only'                     AS spec2,
+        secondary_specialty           AS "value",
+        COUNT(DISTINCT physician_npi) AS "count"
+    FROM aao_test.rpt_madrid2_provider  
+    WHERE provider_type = 'MD'
+    GROUP BY secondary_specialty
+​
+    UNION
+​
+    SELECT
+        'third specialty'             AS spec1,
+        'md only'                     AS spec2,
+        third_specialty               AS "value",
+        COUNT(DISTINCT physician_npi) AS "count"
+    FROM aao_test.rpt_madrid2_provider  
+    WHERE provider_type = 'MD'
+    GROUP BY third_specialty
+​
+    UNION
+​
+    SELECT
+        'state'                       AS spec1,
+        'md only'                     AS spec2,
+        state                         AS "value",
+        COUNT(DISTINCT physician_npi) AS "count"
+    FROM aao_test.rpt_madrid2_provider 
+    WHERE provider_type = 'MD'
+    GROUP BY state
+​
+    UNION
+​
+    SELECT
+        'state'                       AS spec1,
+        'od only'                     AS spec2,
+        state                         AS "value",
+        COUNT(DISTINCT physician_npi) AS "count"
+    FROM aao_test.rpt_madrid2_provider 
+    WHERE provider_type = 'OD'
+    GROUP BY state
+​
+) R1
+​
+ORDER BY spec1, spec2, count DESC;
+
+practice counts
+
+
+DROP TABLE IF EXISTS aao_test.rpt_madrid2_practicevisitsnts_3 ;
+CREATE TABLE aao_test.rpt_madrid2_practicevisitsnts_3  AS SELECT
+    pl.practice_id,
+    plnew.practice_id_fig,
+    plnew.practice_name,
+    EXTRACT(YEAR FROM v.visit_start_date) AS year,
+    EXTRACT(QUARTER FROM v.visit_start_date) AS quarter,
+    COUNT(*) AS count_instance,
+    COUNT(DISTINCT v.patient_guid) AS count_unique_pt
+FROM madrid2.patient_visit v
+JOIN madrid2.practice_location pl ON v.practice_location_id = pl.practice_location_id
+LEFT JOIN aao_team.practice_master plnew ON pl.practice_id = plnew.practice_id
+WHERE EXTRACT(YEAR FROM v.visit_start_date) BETWEEN 2013 and 2020
+GROUP BY
+    pl.practice_id,
+    plnew.practice_id_fig,
+    plnew.practice_name,
+    EXTRACT(YEAR FROM v.visit_start_date),
+    EXTRACT(QUARTER FROM v.visit_start_date)
+ORDER BY
+    pl.practice_id,
+    EXTRACT(YEAR FROM v.visit_start_date),
+    EXTRACT(QUARTER FROM v.visit_start_date);
+
+
+SELECT "year", "quarter", count (DISTINCT practice_id) as practice_count
+FROM aao_test.rpt_madrid2_practicevisitsnts_3
+GROUP by "year", "quarter"
+ORDER BY "year", "quarter";
+
+
+
+
+
+
+
+
+
+
+
